@@ -1,98 +1,115 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { JSX, useState } from 'react';
+import {
+  View,
+  Text,
+  Button,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+type ServerStats = {
+  gpu: any;
+  cpu_usage_percent: number;
+  memory_usage_percent: number;
+  disk_usage_percent: number;
+  gpu_usage_percent: number;
+  gpu_memory_usage_percent: number;
+  gpu_temperature_c: number;
+};
 
-export default function HomeScreen() {
+type Status = 'idle' | 'loading' | 'awake' | 'sleeping';
+
+const SERVER_URL = 'http://192.168.1.38:5000/health';
+
+export default function App(): JSX.Element {
+  const [status, setStatus] = useState<Status>('idle');
+  const [stats, setStats] = useState<ServerStats | null>(null);
+
+  const pingServer = async (): Promise<void> => {
+    setStatus('loading');
+    setStats(null);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    try {
+      const response = await fetch(SERVER_URL, {
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error('Server not OK');
+      }
+
+      const data: ServerStats = await response.json();
+
+      setStats(data);
+      setStatus('awake');
+    } catch (error) {
+      setStatus('sleeping');
+    }
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <View style={styles.container}>
+      <Button title="Ping Server" onPress={pingServer} />
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      {status === 'loading' && (
+        <ActivityIndicator size="large" style={{ marginTop: 20 }} />
+      )}
+
+      {status === 'awake' && stats && (
+        <View style={styles.card}>
+          <Text style={styles.title}>🟢 Server Running</Text>
+
+          <Text>CPU Usage: {stats.cpu_usage_percent}%</Text>
+          <Text>Memory Usage: {stats.memory_usage_percent}%</Text>
+          <Text>Disk Usage: {stats.disk_usage_percent}%</Text>
+          <Text>GPU Usage: {stats.gpu.gpu_usage_percent}%</Text>
+          <Text>GPU Memory Usage: {stats.gpu.gpu_memory_usage_percent}%</Text>
+          <Text>GPU Temperature: {stats.gpu.gpu_temperature_c}°C</Text>
+        </View>
+      )}
+
+      {status === 'sleeping' && (
+        <>
+          <Text style={styles.sleepText}>Kai is sleeping… 💤</Text>
+        </>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
+  container: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    padding: 20,
   },
-  stepContainer: {
-    gap: 8,
+  card: {
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: '#eefaf0',
+    width: '100%',
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: 'bold',
     marginBottom: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  sleepText: {
+    marginTop: 20,
+    fontSize: 18,
+    color: '#666',
+  },
+  image: {
+    marginTop: 12,
+    width: 200,
+    height: 200,
+    resizeMode: 'contain',
   },
 });
