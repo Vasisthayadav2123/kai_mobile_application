@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect , useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import NeonBar from '@/components/neonBar';
 
@@ -33,19 +34,25 @@ export default function ServerStatsPanel() {
   };
 
   // Fetch once on mount and auto-refresh every 5 seconds
-  useEffect(() => {
-    fetchStats(); // initial fetch
-    const interval = setInterval(fetchStats, 5000);
-    return () => clearInterval(interval); // cleanup on unmount
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      let timeout: NodeJS.Timeout | undefined;
 
-  if (loading) {
-    return <ActivityIndicator size="large" style={{ marginTop: 20 }} />;
-  }
+      const poll = async () => {
+        if(!isActive) return;
 
-  if (status === 'sleeping') {
-    return <Text style={styles.sleepText}>Kai is sleeping… 💤</Text>;
-  }
+        await fetchStats();
+        timeout = setTimeout(poll, 5000);
+      };
+      poll(); // Start polling only when in focus
+
+      return () => {
+        isActive = false; // Stop polling when out of focus
+        clearTimeout(timeout);
+      };
+    },[]) 
+  )
 
   return (
     <View style={styles.card}>
