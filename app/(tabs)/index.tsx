@@ -1,172 +1,187 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  View, Text, StyleSheet, ActivityIndicator, 
-  ScrollView, TouchableOpacity, SafeAreaView 
+  View, Text, StyleSheet, ScrollView, SafeAreaView, 
+  ActivityIndicator, TouchableOpacity, Dimensions, AppState, AppStateStatus 
 } from 'react-native';
-import Svg, { Path, Rect } from 'react-native-svg';
-import LinearGradient from 'react-native-linear-gradient';
+import { SERVER_URL } from '@/constants/server';
 
-// --- Types ---
-type Node = { id: string; status: 'ONLINE' | 'DISTRIBUTING' };
-type Stats = {
-  cpu_usage_percent: number;
-  memory_usage_percent: number;
-  memory_used_gb: number;
-  memory_total_gb: number;
-  gpu_temperature_c: number;
-  gpu_usage_percent: number;
-  network_in_gbps: number;
-  network_out_mbps: number;
-  nodes: Node[];
-};
-
-const SERVER_URL = 'http://192.168.1.38:5000/health';
+const { width } = Dimensions.get('window');
 
 export default function CorenetDashboard() {
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  
+  const appState = useRef(AppState.currentState);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res = await fetch(SERVER_URL);
-        const data = await res.json();
-        setStats(data);
-      } catch (e) { console.log("Server unreachable"); }
-      finally { setLoading(false); }
-    };
-
-    fetchStats();
-    const interval = setInterval(fetchStats, 5000);
-    return () => clearInterval(interval);
+    const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(clockInterval);
   }, []);
 
-  if (loading) return <ActivityIndicator size="large" color="#00e5ff" style={styles.loader} />;
+  const formatTime = () => {
+    const options: any = { weekday: 'short', month: 'short', day: 'numeric' };
+    const dateStr = currentTime.toLocaleDateString('en-US', options).toUpperCase();
+    const timeStr = currentTime.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    return `${dateStr} | ${timeStr}`;
+  };
+  const fetchStats = async () => {
+    try {
+      const response = await fetch(`${SERVER_URL}/health`);
+      const json = await response.json();
+      setData(json);
+    } catch (error) {
+      console.log("Server Unreachable");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startSync = () => {
+    if (!intervalRef.current) {
+      fetchStats();
+      intervalRef.current = setInterval(fetchStats, 3000);
+    }
+  };
+
+  const stopSync = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    startSync();
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (appState.current.match(/inactive|background/) && nextState === 'active') {
+        startSync();
+      } else if (nextState.match(/inactive|background/)) {
+        stopSync();
+      }
+      appState.current = nextState;
+    });
+
+    return () => {
+      stopSync();
+      subscription.remove();
+    };
+  }, []);
+
+  if (loading && !data) return <ActivityIndicator size="large" color="#00e5ff" style={styles.loader} />;
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         
-        {/* Header */}
         <View style={styles.header}>
-          <View style={styles.userInfo}>
-            <View style={styles.avatarPlaceholder} />
-            <View>
-              <Text style={styles.headerTitle}>CORENET DASHBOARD <Text style={styles.version}>v3.1</Text></Text>
-              <Text style={styles.headerSubtitle}>TUE OCT 26 | 14:02</Text>
-            </View>
+          <View>
+            <Text style={styles.headerTitle}>KAI DASHBOARD <Text style={styles.version}>{data?.version}</Text></Text>
+            <Text style={styles.headerTime}>{formatTime()}</Text>
           </View>
+          <Text style={styles.syncStatus}>{intervalRef.current ? "● SYNCING" : "○ PAUSED"}</Text>
         </View>
-
-        {/* Top Nav Cards */}
-        <View style={styles.navRow}>
-          <NavCard title="SERVER STATS" active icon="📊" />
-          <NavCard title="SCREEN SHARE" icon="🖥️" sub="Inactive/Dim" />
-          <NavCard title="AI ANALYTICS" icon="🧠" sub="ADMIN" />
-        </View>
-
-        {/* Cluster Alpha Health */}
         <View style={styles.glassCard}>
-          <Text style={styles.cardLabel}>SERVER CLUSTER ALPHA - <Text style={styles.healthText}>HEALTH: 98%</Text></Text>
-          <View style={styles.statsGrid}>
-            <StatMini label="CPU USAGE" value={`${stats?.cpu_usage_percent}%`} />
-            <StatMini label="MEMORY UTIL" value={`${stats?.memory_usage_percent}%`} />
-            <StatMini label="TEMP" value={`${stats?.gpu_temperature_c}°C`} color={stats?.gpu_temperature_c! > 75 ? '#ff1744' : '#00e5ff'} />
+          <Text style={styles.cardHeader}>SERVER CLUSTER ALPHA - <Text style={styles.health}>HEALTH: 98%</Text></Text>
+          <View style={styles.clusterGrid}>
+            <MiniStat label="CPU USAGE" value={`${data?.cpu_usage_percent}%`} />
+            <MiniStat label="MEM UTIL" value={`${data?.memory_usage_percent}%`} />
+            <MiniStat label="GPU TEMP" value={`${data?.gpu?.temperature_c}°C`} color={data?.gpu?.temperature_c > 75 ? '#ff1744' : '#00e5ff'} />
           </View>
         </View>
 
-        {/* Main Metrics Row */}
+        {/* Main Grid */}
         <View style={styles.mainGrid}>
           <View style={styles.gridCol}>
-            <MetricCard title="CPU LOAD" value={`${stats?.cpu_usage_percent}%`} hasGraph />
-            <MetricCard title="NETWORK TRAFFIC" value={`${stats?.network_in_gbps} Gbps`} sub={`Out: ${stats?.network_out_mbps} Mbps`} />
+            <MetricBox title="CPU LOAD" value={`${data?.cpu_usage_percent}%`} />
+            <MetricBox title="NETWORK" value={`${data?.network_in_mbps} mbps`} sub={`Out: ${data?.network_out_mbps} Mbps`} />
           </View>
           <View style={styles.gridCol}>
-            <MetricCard title="MEMORY USAGE" value={`${stats?.memory_used_gb}GB`} total={`/${stats?.memory_total_gb}GB`} progress={stats?.memory_usage_percent} />
-            <MetricCard title="STORAGE" value="88%" sub="Primary: 88% full" progress={88} color="#3dfc58" />
+            <MetricBox title="VRAM USAGE" value={`${data?.gpu?.memory_percent}%`} progress={data?.gpu?.memory_percent} />
+            <MetricBox title="STORAGE" value={`${data?.disk_usage_percent}%`} color="#3dfc58" progress={data?.disk_usage_percent} />
           </View>
         </View>
 
-        {/* Nodes List */}
-        {stats?.nodes.map((node, i) => (
-          <View key={i} style={styles.nodeItem}>
-            <Text style={styles.nodeText}>🟩 {node.id}</Text>
-            <View style={[styles.statusBadge, { borderColor: node.status === 'ONLINE' ? '#3dfc58' : '#ff9800' }]}>
-              <Text style={[styles.statusText, { color: node.status === 'ONLINE' ? '#3dfc58' : '#ff9800' }]}>{node.status}</Text>
+        <Text style={styles.subHeading}>GPU ACCELERATOR</Text>
+        <View style={styles.gpuRow}>
+          <GpuBox label="LOAD" value={`${data?.gpu?.load_percent}%`} />
+          <GpuBox label="VRAM" value={`${data?.gpu?.memory_used_mb}MB`} sub={`/ ${data?.gpu?.memory_total_mb}MB`} />
+          <GpuBox label="TEMP" value={`${data?.gpu?.temperature_c}°C`} hot={data?.gpu?.temperature_c > 75} />
+        </View>
+
+        {/* Node Status */}
+        <View style={styles.nodeList}>
+          {data?.nodes.map((node: any, i: number) => (
+            <View key={i} style={styles.nodeRow}>
+              <Text style={styles.nodeName}>🟢 {node.id}</Text>
+              <View style={[styles.badge, { borderColor: node.status === 'ONLINE' ? '#3dfc58' : '#ff9800' }]}>
+                <Text style={[styles.badgeText, { color: node.status === 'ONLINE' ? '#3dfc58' : '#ff9800' }]}>{node.status}</Text>
+              </View>
             </View>
-          </View>
-        ))}
+          ))}
+        </View>
 
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// --- Sub-Components ---
 
-const NavCard = ({ title, active, icon, sub }: any) => (
-  <TouchableOpacity style={[styles.navCard, active && styles.navCardActive]}>
-    <Text style={styles.navIcon}>{icon}</Text>
-    <Text style={[styles.navCardText, active && styles.navCardTextActive]}>{title}</Text>
-    {sub && <Text style={styles.navCardSub}>{sub}</Text>}
-  </TouchableOpacity>
+const MiniStat = ({ label, value, color = '#00e5ff' }: any) => (
+  <View><Text style={styles.miniLabel}>{label}</Text><Text style={[styles.miniValue, { color }]}>{value}</Text></View>
 );
 
-const StatMini = ({ label, value, color = '#00e5ff' }: any) => (
-  <View>
-    <Text style={styles.miniLabel}>{label}</Text>
-    <Text style={[styles.miniValue, { color }]}>{value}</Text>
-  </View>
-);
-
-const MetricCard = ({ title, value, total, sub, progress, color = '#00e5ff' }: any) => (
+const MetricBox = ({ title, value, sub, progress, color = '#00e5ff' }: any) => (
   <View style={styles.metricCard}>
     <Text style={styles.metricTitle}>{title}</Text>
-    <Text style={styles.metricValue}>{value}<Text style={styles.metricTotal}>{total}</Text></Text>
+    <Text style={styles.metricValue}>{value}</Text>
     {sub && <Text style={styles.metricSub}>{sub}</Text>}
-    {progress !== undefined && (
-      <View style={styles.progressBg}>
-        <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: color }]} />
-      </View>
-    )}
+    {progress !== undefined && <View style={styles.barBg}><View style={[styles.barFill, { width: `${progress}%`, backgroundColor: color }]} /></View>}
   </View>
 );
 
-// --- Styles ---
+const GpuBox = ({ label, value, sub, hot }: any) => (
+  <View style={[styles.gpuCard, hot && styles.gpuHot]}>
+    <Text style={styles.gpuLabel}>{label}</Text>
+    <Text style={[styles.gpuValue, hot && { color: '#ff1744' }]}>{value}</Text>
+    {sub && <Text style={styles.gpuSub}>{sub}</Text>}
+  </View>
+);
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#050505' },
-  loader: { flex: 1, backgroundColor: '#050505' },
+  loader: { flex: 1, backgroundColor: '#050505', justifyContent: 'center' },
   scrollContent: { padding: 16 },
-  header: { marginBottom: 20 },
-  userInfo: { flexDirection: 'row', alignItems: 'center' },
-  avatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#1a1a1a', marginRight: 12 },
-  headerTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  version: { color: '#666', fontSize: 12 },
-  headerSubtitle: { color: '#666', fontSize: 12 },
-  navRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  navCard: { width: '31%', backgroundColor: '#111', padding: 12, borderRadius: 12, alignItems: 'center', borderWeight: 1, borderColor: '#222' },
-  navCardActive: { borderColor: '#00e5ff', backgroundColor: '#002a2f' },
-  navCardText: { color: '#666', fontSize: 10, marginTop: 4, textAlign: 'center' },
-  navCardTextActive: { color: '#00e5ff', fontWeight: 'bold' },
-  navCardSub: { color: '#444', fontSize: 8 },
-  navIcon: { fontSize: 18 },
-  glassCard: { backgroundColor: '#111', padding: 16, borderRadius: 16, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#00e5ff' },
-  cardLabel: { color: '#666', fontSize: 12, marginBottom: 10 },
-  healthText: { color: '#3dfc58', fontWeight: 'bold' },
-  statsGrid: { flexDirection: 'row', justifyContent: 'space-between' },
-  miniLabel: { color: '#444', fontSize: 10 },
-  miniValue: { fontSize: 16, fontWeight: 'bold' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  headerTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  version: { color: '#444', fontSize: 10 },
+  headerTime: { color: '#666', fontSize: 11 },
+  syncStatus: { color: '#3dfc58', fontSize: 9, fontWeight: 'bold' },
+  glassCard: { backgroundColor: '#111', borderRadius: 16, padding: 16, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#00e5ff' },
+  cardHeader: { color: '#666', fontSize: 10, marginBottom: 10 },
+  health: { color: '#3dfc58' },
+  clusterGrid: { flexDirection: 'row', justifyContent: 'space-between' },
+  miniLabel: { color: '#444', fontSize: 9 },
+  miniValue: { fontSize: 14, fontWeight: 'bold' },
   mainGrid: { flexDirection: 'row', justifyContent: 'space-between' },
   gridCol: { width: '48%' },
-  metricCard: { backgroundColor: '#111', padding: 12, borderRadius: 12, marginBottom: 12 },
-  metricTitle: { color: '#666', fontSize: 10, marginBottom: 4 },
-  metricValue: { color: '#00e5ff', fontSize: 20, fontWeight: 'bold' },
-  metricTotal: { color: '#333', fontSize: 14 },
-  metricSub: { color: '#444', fontSize: 9, marginTop: 4 },
-  progressBg: { height: 4, backgroundColor: '#222', borderRadius: 2, marginTop: 8 },
-  progressFill: { height: 4, borderRadius: 2 },
-  nodeItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 12, marginBottom: 8 },
-  nodeText: { color: '#fff', fontWeight: 'bold' },
-  statusBadge: { borderWidth: 1, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
-  statusText: { fontSize: 10, fontWeight: 'bold' }
+  metricCard: { backgroundColor: '#111', borderRadius: 12, padding: 15, marginBottom: 15, borderWidth: 1, borderColor: '#1a1a1a' },
+  metricTitle: { color: '#555', fontSize: 9, fontWeight: 'bold' },
+  metricValue: { color: '#00e5ff', fontSize: 20, fontWeight: 'bold', marginTop: 4 },
+  metricSub: { color: '#444', fontSize: 8, marginTop: 4 },
+  barBg: { height: 3, backgroundColor: '#222', borderRadius: 2, marginTop: 10 },
+  barFill: { height: 3, borderRadius: 2 },
+  subHeading: { color: '#444', fontSize: 10, fontWeight: 'bold', marginVertical: 10 },
+  gpuRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  gpuCard: { width: '31%', backgroundColor: '#111', borderRadius: 12, padding: 12, alignItems: 'center' },
+  gpuHot: { borderColor: '#ff1744', borderWidth: 1 },
+  gpuLabel: { color: '#555', fontSize: 8 },
+  gpuValue: { color: '#00e5ff', fontSize: 16, fontWeight: 'bold' },
+  gpuSub: { color: '#333', fontSize: 7 },
+  nodeList: { backgroundColor: '#0a0a0a', borderRadius: 12, padding: 10 },
+  nodeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, borderBottomWidth: 1, borderBottomColor: '#111' },
+  nodeName: { color: '#ccc', fontSize: 12 },
+  badge: { borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
+  badgeText: { fontSize: 9, fontWeight: 'bold' }
 });

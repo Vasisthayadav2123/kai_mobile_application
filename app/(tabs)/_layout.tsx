@@ -26,8 +26,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="screen"
         options={{
-          title: 'Screen',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: 'Screen Share',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="tv.fill" color={color} />,
         }}
       />
     </Tabs>
