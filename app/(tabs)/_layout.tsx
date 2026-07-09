@@ -12,9 +12,14 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarStyle: {
+          backgroundColor: '#0f1923',
+          borderTopColor: '#1a2d3d',
+        },
+        tabBarActiveTintColor: '#f0845e',
+        tabBarInactiveTintColor: '#4a5f73',
       }}>
       <Tabs.Screen
         name="index"
@@ -26,8 +31,9 @@ export default function TabLayout() {
       <Tabs.Screen
         name="screen"
         options={{
-          title: 'Screen Share',
+          title: 'Livestream',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="tv.fill" color={color} />,
+          tabBarStyle: { display: 'none' },
         }}
       />
     </Tabs>

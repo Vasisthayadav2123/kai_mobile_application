@@ -3,22 +3,57 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   Animated,
   Dimensions,
   ActivityIndicator,
+  StatusBar,
+  Platform,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import MediaControls from '@/components/media-controls';
-import { SERVER_URL, SERVER_IP, SERVER_PORT, WEBRTC_URL, WEBRTC_PORT } from '@/constants/server';
+import Svg, { Path } from 'react-native-svg';
+import { getServerUrl, getWebRtcUrl, getServerIp, fetchWithAuth, SERVER_PORT, WEBRTC_PORT } from '@/constants/server';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const WEBRTC_VIEWER_ASPECT = 16 / 9;
-const VIEWER_WIDTH = SCREEN_WIDTH - 32;
-const VIEWER_HEIGHT = VIEWER_WIDTH / WEBRTC_VIEWER_ASPECT;
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// ─── WebRTC viewer HTML injected into WebView ─────────────────────
+// ─── Inline SVG Icons ─────────────────────────────────────────────
+const PreviousIcon = ({ color = '#fff', size = 22 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <Path d="M6 6h2v12H6V6zm3.5 6 8.5 6V6l-8.5 6z" />
+  </Svg>
+);
+
+const PlayPauseIcon = ({ color = '#fff', size = 28 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <Path d="M8 5v14l11-7L8 5z" />
+  </Svg>
+);
+
+const NextIcon = ({ color = '#fff', size = 22 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <Path d="M6 18l8.5-6L6 6v12zm10-12v12h2V6h-2z" />
+  </Svg>
+);
+
+const VolumeUpIcon = ({ color = '#fff', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <Path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.49 4.49 0 0 0 2.5-3.5zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+  </Svg>
+);
+
+const VolumeDownIcon = ({ color = '#fff', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <Path d="M18.5 12A4.5 4.5 0 0 0 16 8.5v7a4.49 4.49 0 0 0 2.5-3.5zM5 9v6h4l5 5V4L9 9H5z" />
+  </Svg>
+);
+
+const MuteIcon = ({ color = '#fff', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <Path d="M16.5 12A4.5 4.5 0 0 0 14 8.5v2.09l2.41 2.41c.06-.31.09-.63.09-.97zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4l-2.1 2.1L12 8.2V4z" />
+  </Svg>
+);
+
+// ─── WebRTC viewer HTML ───────────────────────────────────────────
 const getWebRTCHtml = (serverUrl: string) => `
 <!DOCTYPE html>
 <html>
@@ -27,11 +62,12 @@ const getWebRTCHtml = (serverUrl: string) => `
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #0a0a0a;
+      background: #000;
       display: flex;
       align-items: center;
       justify-content: center;
       height: 100vh;
+      width: 100vw;
       overflow: hidden;
       font-family: system-ui;
     }
@@ -47,18 +83,18 @@ const getWebRTCHtml = (serverUrl: string) => `
       left: 50%;
       transform: translate(-50%, -50%);
       color: #00e5ff;
-      font-size: 14px;
+      font-size: 13px;
       text-align: center;
       z-index: 10;
     }
     #status.hidden { display: none; }
     .spinner {
-      width: 24px; height: 24px;
-      border: 2px solid rgba(0,229,255,0.2);
+      width: 28px; height: 28px;
+      border: 2px solid rgba(0,229,255,0.15);
       border-top-color: #00e5ff;
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
-      margin: 0 auto 8px;
+      margin: 0 auto 10px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
@@ -68,7 +104,7 @@ const getWebRTCHtml = (serverUrl: string) => `
     <div class="spinner"></div>
     Connecting to stream…
   </div>
-  <video id="remoteVideo" autoplay playsinline muted></video>
+  <video id="remoteVideo" autoplay playsinline></video>
 
   <script>
     const statusEl = document.getElementById('status');
@@ -79,6 +115,10 @@ const getWebRTCHtml = (serverUrl: string) => `
     let reconnectTimer = null;
     let retryCount = 0;
     const MAX_RETRIES = 50;
+    let isMuted = true;
+
+    // Start muted, unmute on first user gesture via RN message
+    videoEl.muted = true;
 
     function log(msg) {
       window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'log', data: msg }));
@@ -105,7 +145,7 @@ const getWebRTCHtml = (serverUrl: string) => `
           if (event.streams && event.streams[0]) {
             videoEl.srcObject = event.streams[0];
           } else {
-            const stream = new MediaStream();
+            const stream = videoEl.srcObject || new MediaStream();
             stream.addTrack(event.track);
             videoEl.srcObject = stream;
           }
@@ -126,16 +166,12 @@ const getWebRTCHtml = (serverUrl: string) => `
 
         pc.onicecandidate = async (event) => {
           if (event.candidate === null) {
-            // All ICE candidates gathered; send the offer
             const offer = pc.localDescription;
             log('Sending offer to server');
             const response = await fetch(SERVER + '/offer', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                sdp: offer.sdp,
-                type: offer.type,
-              }),
+              body: JSON.stringify({ sdp: offer.sdp, type: offer.type }),
             });
             const answer = await response.json();
             log('Got answer from server');
@@ -171,35 +207,63 @@ const getWebRTCHtml = (serverUrl: string) => `
       }, delay);
     }
 
-    // Listen for messages from React Native
+    // Listen for messages from React Native (reconnect, mute/unmute)
     window.addEventListener('message', (e) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.action === 'reconnect') {
           retryCount = 0;
           connect();
+        } else if (msg.action === 'toggleMute') {
+          videoEl.muted = !videoEl.muted;
+          isMuted = videoEl.muted;
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
+            JSON.stringify({ type: 'muteState', data: videoEl.muted })
+          );
+        } else if (msg.action === 'unmute') {
+          videoEl.muted = false;
+          isMuted = false;
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
+            JSON.stringify({ type: 'muteState', data: false })
+          );
         }
       } catch (_) {}
     });
 
-    // Start
     connect();
   </script>
 </body>
 </html>
 `;
 
+// ─── Media action types ───────────────────────────────────────────
+type MediaAction = 'playpause' | 'next' | 'previous' | 'volumeup' | 'volumedown';
+
 // ─── Main Screen Component ────────────────────────────────────────
 export default function ScreenShare() {
   const [connectionState, setConnectionState] = useState<
     'connecting' | 'connected' | 'disconnected' | 'error'
   >('connecting');
-  const [showControls, setShowControls] = useState(true);
+  const [showOverlay, setShowOverlay] = useState(true);
+  const [isMuted, setIsMuted] = useState(true);
   const webviewRef = useRef<WebView>(null);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const overlayAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const hideTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Status dot pulse animation
+  // Auto-hide overlay after 4 seconds
+  const scheduleHide = useCallback(() => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      Animated.timing(overlayAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => setShowOverlay(false));
+    }, 4000);
+  }, [overlayAnim]);
+
+  // Status dot pulse
   useEffect(() => {
     if (connectionState === 'connected') {
       Animated.loop(
@@ -208,6 +272,7 @@ export default function ScreenShare() {
           Animated.timing(pulseAnim, { toValue: 0, duration: 1000, useNativeDriver: true }),
         ])
       ).start();
+      scheduleHide();
     } else {
       pulseAnim.setValue(0);
     }
@@ -230,6 +295,9 @@ export default function ScreenShare() {
         case 'error':
           setConnectionState('error');
           break;
+        case 'muteState':
+          setIsMuted(msg.data);
+          break;
         case 'log':
           console.log('[WebRTC]', msg.data);
           break;
@@ -246,15 +314,51 @@ export default function ScreenShare() {
     `);
   }, []);
 
-  const toggleControls = useCallback(() => {
-    const toValue = showControls ? 0 : 1;
-    Animated.timing(fadeAnim, {
-      toValue,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-    setShowControls(!showControls);
-  }, [showControls, fadeAnim]);
+  const toggleOverlay = useCallback(() => {
+    if (showOverlay) {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      Animated.timing(overlayAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => setShowOverlay(false));
+    } else {
+      setShowOverlay(true);
+      Animated.timing(overlayAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+      scheduleHide();
+    }
+  }, [showOverlay, overlayAnim, scheduleHide]);
+
+  const toggleMute = useCallback(() => {
+    webviewRef.current?.injectJavaScript(`
+      window.postMessage(JSON.stringify({ action: 'toggleMute' }), '*');
+      true;
+    `);
+    // Reset auto-hide timer on interaction
+    scheduleHide();
+  }, [scheduleHide]);
+
+  const sendControl = useCallback(async (action: MediaAction) => {
+    try {
+      const res = await fetchWithAuth(`${getServerUrl()}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        console.warn('Control error:', err.message);
+      }
+    } catch (e) {
+      console.warn('Control request failed:', e);
+    }
+    // Reset auto-hide timer on interaction
+    scheduleHide();
+  }, [scheduleHide]);
 
   const statusColor =
     connectionState === 'connected'
@@ -270,86 +374,136 @@ export default function ScreenShare() {
       ? 'CONNECTING'
       : connectionState === 'error'
       ? 'ERROR'
-      : 'DISCONNECTED';
+      : 'OFFLINE';
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>SCREEN SHARE</Text>
-          <View style={styles.statusRow}>
+    <View style={styles.container}>
+      <StatusBar hidden />
+
+      {/* ─── Fullscreen WebRTC Video ──────────────────────────── */}
+      <WebView
+        ref={webviewRef}
+        source={{ html: getWebRTCHtml(getWebRtcUrl()) }}
+        style={styles.fullscreenWebView}
+        javaScriptEnabled
+        mediaPlaybackRequiresUserAction={false}
+        allowsInlineMediaPlayback
+        onMessage={handleWebViewMessage}
+        originWhitelist={['*']}
+        scrollEnabled={false}
+        bounces={false}
+        overScrollMode="never"
+      />
+
+      {/* ─── Tap Target (over the video) ─────────────────────── */}
+      <TouchableOpacity
+        style={StyleSheet.absoluteFill}
+        activeOpacity={1}
+        onPress={toggleOverlay}
+      />
+
+      {/* ─── Connection Overlay (spinner) ─────────────────────── */}
+      {connectionState === 'connecting' && (
+        <View style={styles.connectingOverlay} pointerEvents="none">
+          <ActivityIndicator size="large" color="#00e5ff" />
+          <Text style={styles.connectingText}>Connecting to stream…</Text>
+        </View>
+      )}
+
+      {/* ─── Top Status Bar (floating) ────────────────────────── */}
+      {showOverlay && (
+        <Animated.View style={[styles.topBar, { opacity: overlayAnim }]} pointerEvents="box-none">
+          <View style={styles.statusPill}>
             <Animated.View
               style={[
                 styles.statusDot,
                 {
                   backgroundColor: statusColor,
-                  opacity: pulseAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [1, 0.3],
-                  }),
+                  opacity: connectionState === 'connected'
+                    ? pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.3] })
+                    : 1,
                 },
               ]}
             />
-            <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+            <Text style={[styles.statusLabel, { color: statusColor }]}>{statusLabel}</Text>
           </View>
-        </View>
-        {(connectionState === 'disconnected' || connectionState === 'error') && (
-          <TouchableOpacity style={styles.reconnectBtn} onPress={handleReconnect}>
-            <Text style={styles.reconnectText}>RECONNECT</Text>
-          </TouchableOpacity>
-        )}
-      </View>
 
-      {/* WebRTC Video Viewer */}
-      <TouchableOpacity
-        activeOpacity={1}
-        onPress={toggleControls}
-        style={styles.videoContainer}
-      >
-        <View style={styles.videoFrame}>
-          <WebView
-            ref={webviewRef}
-            source={{ html: getWebRTCHtml(WEBRTC_URL) }}
-            style={styles.webview}
-            javaScriptEnabled
-            mediaPlaybackRequiresUserAction={false}
-            allowsInlineMediaPlayback
-            onMessage={handleWebViewMessage}
-            originWhitelist={['*']}
-            scrollEnabled={false}
-            bounces={false}
-            overScrollMode="never"
-          />
+          <View style={styles.topRight}>
+            {/* Mute/Unmute button */}
+            <TouchableOpacity style={styles.iconBtn} onPress={toggleMute}>
+              {isMuted ? (
+                <MuteIcon color="#ff5252" size={20} />
+              ) : (
+                <VolumeUpIcon color="#fff" size={20} />
+              )}
+            </TouchableOpacity>
 
-          {/* Connection overlay */}
-          {connectionState === 'connecting' && (
-            <View style={styles.overlay}>
-              <ActivityIndicator size="small" color="#00e5ff" />
-              <Text style={styles.overlayText}>Connecting to stream…</Text>
-            </View>
-          )}
-        </View>
+            {/* Reconnect button */}
+            {(connectionState === 'disconnected' || connectionState === 'error') && (
+              <TouchableOpacity style={styles.reconnectBtn} onPress={handleReconnect}>
+                <Text style={styles.reconnectText}>RECONNECT</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </Animated.View>
+      )}
 
-        {/* Tap hint */}
-        <Text style={styles.tapHint}>
-          {showControls ? 'Tap video to hide controls' : 'Tap video to show controls'}
-        </Text>
-      </TouchableOpacity>
+      {/* ─── Bottom Media Controls Bar (floating) ─────────────── */}
+      {showOverlay && (
+        <Animated.View style={[styles.bottomBar, { opacity: overlayAnim }]}>
+          {/* Server info */}
+          <View style={styles.serverRow}>
+            <Text style={styles.serverTag}>STREAM</Text>
+            <Text style={styles.serverAddr}>{getServerIp()}:{WEBRTC_PORT}</Text>
+            <Text style={[styles.serverTag, { marginLeft: 10 }]}>CTRL</Text>
+            <Text style={styles.serverAddr}>{getServerIp()}:{SERVER_PORT}</Text>
+          </View>
 
-      {/* Media Controls */}
-      <Animated.View style={[styles.controlsWrapper, { opacity: fadeAnim }]}>
-        {showControls && <MediaControls disabled={connectionState !== 'connected'} />}
-      </Animated.View>
+          {/* Media Controls */}
+          <View style={styles.controlsRow}>
+            <TouchableOpacity
+              style={styles.controlBtn}
+              onPress={() => sendControl('volumedown')}
+              disabled={connectionState !== 'connected'}
+            >
+              <VolumeDownIcon color="#a0aec0" size={18} />
+            </TouchableOpacity>
 
-      {/* Server Info */}
-      <View style={styles.serverInfo}>
-        <Text style={styles.serverLabel}>STREAM</Text>
-        <Text style={styles.serverUrl}>{SERVER_IP}:{WEBRTC_PORT}</Text>
-        <Text style={[styles.serverLabel, { marginLeft: 12 }]}>CTRL</Text>
-        <Text style={styles.serverUrl}>{SERVER_IP}:{SERVER_PORT}</Text>
-      </View>
-    </SafeAreaView>
+            <TouchableOpacity
+              style={styles.controlBtn}
+              onPress={() => sendControl('previous')}
+              disabled={connectionState !== 'connected'}
+            >
+              <PreviousIcon color="#e2e8f0" size={20} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.controlBtn, styles.playBtn]}
+              onPress={() => sendControl('playpause')}
+              disabled={connectionState !== 'connected'}
+            >
+              <PlayPauseIcon color="#000" size={26} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.controlBtn}
+              onPress={() => sendControl('next')}
+              disabled={connectionState !== 'connected'}
+            >
+              <NextIcon color="#e2e8f0" size={20} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.controlBtn}
+              onPress={() => sendControl('volumeup')}
+              disabled={connectionState !== 'connected'}
+            >
+              <VolumeUpIcon color="#a0aec0" size={18} />
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -357,114 +511,143 @@ export default function ScreenShare() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#050505',
+    backgroundColor: '#000',
   },
-  header: {
+  fullscreenWebView: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+  },
+
+  // ─── Connecting Overlay ───
+  connectingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    zIndex: 5,
+  },
+  connectingText: {
+    color: '#00e5ff',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+
+  // ─── Top Bar ───
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingTop: Platform.OS === 'android' ? 36 : 50,
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    zIndex: 10,
   },
-  headerLeft: {
-    gap: 4,
-  },
-  headerTitle: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    letterSpacing: 1.5,
-  },
-  statusRow: {
+  statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
     gap: 6,
   },
   statusDot: {
-    width: 8,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: 4,
   },
-  statusText: {
+  statusLabel: {
     fontSize: 10,
     fontWeight: 'bold',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
+  },
+  topRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  iconBtn: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    padding: 8,
+    borderRadius: 20,
   },
   reconnectBtn: {
     borderWidth: 1,
     borderColor: '#00e5ff',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
   reconnectText: {
     color: '#00e5ff',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: 'bold',
     letterSpacing: 0.5,
   },
-  videoContainer: {
-    alignItems: 'center',
-    marginTop: 8,
+
+  // ─── Bottom Bar ───
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingBottom: Platform.OS === 'android' ? 16 : 30,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    zIndex: 10,
   },
-  videoFrame: {
-    width: VIEWER_WIDTH,
-    height: VIEWER_HEIGHT,
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#0a0a0a',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    // Glow effect
-    shadowColor: '#00e5ff',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 4,
-  },
-  webview: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-  },
-  overlayText: {
-    color: '#00e5ff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  tapHint: {
-    color: '#333',
-    fontSize: 10,
-    marginTop: 8,
-    letterSpacing: 0.5,
-  },
-  controlsWrapper: {
-    marginTop: 4,
-  },
-  serverInfo: {
+  serverRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingBottom: 12,
-    marginTop: 'auto',
+    gap: 5,
+    marginBottom: 14,
   },
-  serverLabel: {
-    color: '#333',
-    fontSize: 9,
+  serverTag: {
+    color: '#555',
+    fontSize: 8,
     fontWeight: 'bold',
     letterSpacing: 1,
   },
-  serverUrl: {
-    color: '#444',
-    fontSize: 9,
+  serverAddr: {
+    color: '#666',
+    fontSize: 8,
     fontFamily: 'monospace',
+  },
+  controlsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  controlBtn: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  playBtn: {
+    backgroundColor: '#00e5ff',
+    borderColor: '#00e5ff',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    shadowColor: '#00e5ff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 16,
+    elevation: 8,
   },
 });

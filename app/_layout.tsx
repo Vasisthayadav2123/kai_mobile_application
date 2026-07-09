@@ -1,9 +1,11 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import React, { useState } from 'react';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import ConnectionAnimation from '@/components/connection-animation';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -11,6 +13,7 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const [isConnected, setIsConnected] = useState(false);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -19,6 +22,11 @@ export default function RootLayout() {
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />
+
+      {/* Show connection animation overlay on app startup */}
+      {!isConnected && (
+        <ConnectionAnimation onComplete={() => setIsConnected(true)} />
+      )}
     </ThemeProvider>
   );
 }

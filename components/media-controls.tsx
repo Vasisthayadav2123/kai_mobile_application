@@ -8,7 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { SERVER_URL } from '@/constants/server';
+import { getServerUrl, fetchWithAuth } from '@/constants/server';
 
 // ─── Icon Components ──────────────────────────────────────────────
 const PreviousIcon = ({ color = '#fff', size = 22 }) => (
@@ -52,7 +52,7 @@ interface MediaControlsProps {
 export default function MediaControls({ disabled = false }: MediaControlsProps) {
   const sendControl = useCallback(async (action: MediaAction) => {
     try {
-      const res = await fetch(`${SERVER_URL}/control`, {
+      const res = await fetchWithAuth(`${getServerUrl()}/control`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
