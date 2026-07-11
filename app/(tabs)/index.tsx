@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Path, G, Rect, Line, Text as SvgText } from 'react-native-svg';
 import { getServerUrl, fetchWithAuth } from '@/constants/server';
+import { useIsFocused } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 const CARD_PADDING = 16;
@@ -230,22 +231,31 @@ export default function CorenetDashboard() {
     }
   };
 
+  const isFocused = useIsFocused();
+
   useEffect(() => {
-    startSync();
-    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
-      if (appState.current.match(/inactive|background/) && nextState === 'active') {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (isFocused && nextState === 'active') {
         startSync();
-      } else if (nextState.match(/inactive|background/)) {
+      } else {
         stopSync();
       }
       appState.current = nextState;
-    });
+    };
+
+    if (isFocused && AppState.currentState === 'active') {
+      startSync();
+    } else {
+      stopSync();
+    }
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
 
     return () => {
       stopSync();
       subscription.remove();
     };
-  }, []);
+  }, [isFocused]);
 
   // Generate pseudo-historical chart data from current values
   const chartBars = useMemo(() => {

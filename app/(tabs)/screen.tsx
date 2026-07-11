@@ -53,6 +53,14 @@ const MuteIcon = ({ color = '#fff', size = 20 }) => (
   </Svg>
 );
 
+const RefreshIcon = ({ color = '#fff', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M23 4v6h-6" />
+    <Path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+  </Svg>
+);
+
+
 // ─── WebRTC viewer HTML ───────────────────────────────────────────
 const getWebRTCHtml = (serverUrl: string) => `
 <!DOCTYPE html>
@@ -112,13 +120,13 @@ const getWebRTCHtml = (serverUrl: string) => `
     const SERVER   = '${serverUrl}';
 
     let pc = null;
+    let remoteStream = null;
     let reconnectTimer = null;
     let retryCount = 0;
     const MAX_RETRIES = 50;
-    let isMuted = true;
 
-    // Start muted, unmute on first user gesture via RN message
-    videoEl.muted = true;
+    // Start unmuted - mediaPlaybackRequiresUserAction={false} handles autoplay policy
+    videoEl.muted = false;
 
     function log(msg) {
       window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'log', data: msg }));
@@ -129,9 +137,19 @@ const getWebRTCHtml = (serverUrl: string) => `
       statusEl.className = show ? '' : 'hidden';
     }
 
+    function updateMuteState(muted) {
+      videoEl.muted = muted;
+      window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
+        JSON.stringify({ type: 'muteState', data: muted })
+      );
+    }
+
     async function connect() {
       try {
         if (pc) { pc.close(); pc = null; }
+
+        remoteStream = new MediaStream();
+        videoEl.srcObject = remoteStream;
 
         pc = new RTCPeerConnection({
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -142,13 +160,11 @@ const getWebRTCHtml = (serverUrl: string) => `
 
         pc.ontrack = (event) => {
           log('Track received: ' + event.track.kind);
-          if (event.streams && event.streams[0]) {
-            videoEl.srcObject = event.streams[0];
-          } else {
-            const stream = videoEl.srcObject || new MediaStream();
-            stream.addTrack(event.track);
-            videoEl.srcObject = stream;
+          if (remoteStream) {
+            remoteStream.addTrack(event.track);
           }
+          // Force play after both tracks attached
+          videoEl.play().catch(function(e) { log('play() error: ' + e.message); });
           setStatus('', false);
           retryCount = 0;
           window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'connected' }));
@@ -215,17 +231,9 @@ const getWebRTCHtml = (serverUrl: string) => `
           retryCount = 0;
           connect();
         } else if (msg.action === 'toggleMute') {
-          videoEl.muted = !videoEl.muted;
-          isMuted = videoEl.muted;
-          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
-            JSON.stringify({ type: 'muteState', data: videoEl.muted })
-          );
+          updateMuteState(!videoEl.muted);
         } else if (msg.action === 'unmute') {
-          videoEl.muted = false;
-          isMuted = false;
-          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
-            JSON.stringify({ type: 'muteState', data: false })
-          );
+          updateMuteState(false);
         }
       } catch (_) {}
     });
@@ -245,7 +253,7 @@ export default function ScreenShare() {
     'connecting' | 'connected' | 'disconnected' | 'error'
   >('connecting');
   const [showOverlay, setShowOverlay] = useState(true);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
   const webviewRef = useRef<WebView>(null);
   const overlayAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -305,14 +313,12 @@ export default function ScreenShare() {
     } catch {}
   }, []);
 
-  const handleReconnect = useCallback(() => {
+
+  const handleRefreshStream = useCallback(() => {
     setConnectionState('connecting');
-    webviewRef.current?.injectJavaScript(`
-      retryCount = 0;
-      connect();
-      true;
-    `);
-  }, []);
+    webviewRef.current?.reload();
+    scheduleHide();
+  }, [scheduleHide]);
 
   const toggleOverlay = useCallback(() => {
     if (showOverlay) {
@@ -335,7 +341,17 @@ export default function ScreenShare() {
 
   const toggleMute = useCallback(() => {
     webviewRef.current?.injectJavaScript(`
-      window.postMessage(JSON.stringify({ action: 'toggleMute' }), '*');
+      if (typeof updateMuteState === 'function') {
+        updateMuteState(!videoEl.muted);
+      } else {
+        const video = document.getElementById('remoteVideo');
+        if (video) {
+          video.muted = !video.muted;
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'muteState', data: video.muted }));
+          }
+        }
+      }
       true;
     `);
     // Reset auto-hide timer on interaction
@@ -388,6 +404,9 @@ export default function ScreenShare() {
         javaScriptEnabled
         mediaPlaybackRequiresUserAction={false}
         allowsInlineMediaPlayback
+        allowsProtectedMedia={true}
+        mixedContentMode="always"
+        androidLayerType="hardware"
         onMessage={handleWebViewMessage}
         originWhitelist={['*']}
         scrollEnabled={false}
@@ -401,6 +420,7 @@ export default function ScreenShare() {
         activeOpacity={1}
         onPress={toggleOverlay}
       />
+
 
       {/* ─── Connection Overlay (spinner) ─────────────────────── */}
       {connectionState === 'connecting' && (
@@ -429,6 +449,11 @@ export default function ScreenShare() {
           </View>
 
           <View style={styles.topRight}>
+            {/* Refresh stream button */}
+            <TouchableOpacity style={styles.iconBtn} onPress={handleRefreshStream}>
+              <RefreshIcon color="#00e5ff" size={20} />
+            </TouchableOpacity>
+
             {/* Mute/Unmute button */}
             <TouchableOpacity style={styles.iconBtn} onPress={toggleMute}>
               {isMuted ? (
@@ -440,7 +465,7 @@ export default function ScreenShare() {
 
             {/* Reconnect button */}
             {(connectionState === 'disconnected' || connectionState === 'error') && (
-              <TouchableOpacity style={styles.reconnectBtn} onPress={handleReconnect}>
+              <TouchableOpacity style={styles.reconnectBtn} onPress={handleRefreshStream}>
                 <Text style={styles.reconnectText}>RECONNECT</Text>
               </TouchableOpacity>
             )}
@@ -649,5 +674,30 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.6,
     shadowRadius: 16,
     elevation: 8,
+  },
+  muteOverlayHint: {
+    position: 'absolute',
+    bottom: 120,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(26, 45, 61, 0.95)',
+    borderWidth: 1,
+    borderColor: '#00e5ff',
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+    shadowColor: '#00e5ff',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  muteOverlayText: {
+    color: '#00e5ff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
 });

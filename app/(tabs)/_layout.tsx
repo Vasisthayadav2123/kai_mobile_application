@@ -29,6 +29,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="commands"
+        options={{
+          title: 'Commands',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="terminal.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="screen"
         options={{
           title: 'Livestream',
