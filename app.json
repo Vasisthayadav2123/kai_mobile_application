@@ -39,6 +39,12 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow KAI to record audio to process voice commands."
+        }
       ]
     ],
     "experiments": {

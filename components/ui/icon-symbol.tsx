@@ -20,6 +20,7 @@ const MAPPING = {
   'chevron.right': 'chevron-right',
   'tv.fill': 'tv',
   'terminal.fill': 'developer-board',
+  'mic.fill': 'mic',
 } as IconMapping;
 
 /**

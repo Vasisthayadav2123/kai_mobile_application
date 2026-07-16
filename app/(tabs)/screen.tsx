@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   StatusBar,
   Platform,
+  TextInput,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Svg, { Path } from 'react-native-svg';
@@ -60,9 +61,35 @@ const RefreshIcon = ({ color = '#fff', size = 20 }) => (
   </Svg>
 );
 
+const OrientationIcon = ({ color = '#fff', size = 20, isPortrait = false }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    {isPortrait ? (
+      <Path d="M5 2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
+    ) : (
+      <Path d="M2 5h20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+    )}
+  </Svg>
+);
+
+const KeyboardIcon = ({ color = '#fff', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M2 6h20v12H2z" />
+    <Path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4" />
+  </Svg>
+);
+
+const WindowsIcon = ({ color = '#fff', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M3 5.5L10.5 4.5V11.5H3V5.5Z" fill={color} />
+    <Path d="M3 12.5H10.5V19.5L3 18.5V12.5Z" fill={color} />
+    <Path d="M11.5 4.3L21 3V11.5H11.5V4.3Z" fill={color} />
+    <Path d="M11.5 12.5H21V21L11.5 19.7V12.5Z" fill={color} />
+  </Svg>
+);
+
 
 // ─── WebRTC viewer HTML ───────────────────────────────────────────
-const getWebRTCHtml = (serverUrl: string) => `
+const getWebRTCHtml = (serverUrl: string, orientation: 'landscape' | 'portrait') => `
 <!DOCTYPE html>
 <html>
 <head>
@@ -80,10 +107,18 @@ const getWebRTCHtml = (serverUrl: string) => `
       font-family: system-ui;
     }
     video {
+      background: #000;
+    }
+    body.portrait video {
       width: 100%;
       height: 100%;
       object-fit: contain;
-      background: #000;
+    }
+    body.landscape video {
+      transform: rotate(90deg);
+      width: 100vh;
+      height: 100vw;
+      object-fit: contain;
     }
     #status {
       position: absolute;
@@ -105,13 +140,36 @@ const getWebRTCHtml = (serverUrl: string) => `
       margin: 0 auto 10px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    #virtualCursor {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #00e5ff;
+      border-radius: 50%;
+      background: rgba(0, 229, 255, 0.3);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      display: none;
+      z-index: 10000;
+      box-shadow: 0 0 8px #00e5ff, inset 0 0 4px #00e5ff;
+      transition: width 0.1s, height 0.1s, background-color 0.1s;
+    }
+    #virtualCursor.clicking {
+      width: 24px;
+      height: 24px;
+      background: rgba(255, 17, 68, 0.5);
+      border-color: #ff1744;
+      box-shadow: 0 0 12px #ff1744;
+    }
   </style>
 </head>
-<body>
+<body class="${orientation}">
   <div id="status">
     <div class="spinner"></div>
     Connecting to stream…
   </div>
+  <div id="virtualCursor"></div>
   <video id="remoteVideo" autoplay playsinline></video>
 
   <script>
@@ -223,6 +281,221 @@ const getWebRTCHtml = (serverUrl: string) => `
       }, delay);
     }
 
+    // Touch variables
+    const cursorEl = document.getElementById('virtualCursor');
+    
+    function showCursor(x, y, clicking = false) {
+      cursorEl.style.left = x + 'px';
+      cursorEl.style.top = y + 'px';
+      cursorEl.style.display = 'block';
+      if (clicking) {
+        cursorEl.classList.add('clicking');
+      } else {
+        cursorEl.classList.remove('clicking');
+      }
+    }
+
+    let hideCursorTimeout = null;
+    function requestHideCursor() {
+      if (hideCursorTimeout) clearTimeout(hideCursorTimeout);
+      hideCursorTimeout = setTimeout(() => {
+        cursorEl.style.display = 'none';
+      }, 1500);
+    }
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let lastTouchX = 0;
+    let lastTouchY = 0;
+    let lastTapTime = 0;
+    let isDragging = false;
+    let isDoubleTapDrag = false;
+    let longPressTimeout = null;
+    let touchCount = 0;
+
+    function getNormalizedCoords(clientX, clientY) {
+      const videoW = videoEl.videoWidth;
+      const videoH = videoEl.videoHeight;
+      if (!videoW || !videoH) return null;
+
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      const videoAspect = videoW / videoH;
+
+      const isRotated = document.body.classList.contains('landscape');
+
+      let renderW, renderH, offsetX, offsetY;
+
+      if (!isRotated) {
+        const elemAspect = W / H;
+        if (elemAspect > videoAspect) {
+          renderH = H;
+          renderW = H * videoAspect;
+          offsetX = (W - renderW) / 2;
+          offsetY = 0;
+        } else {
+          renderW = W;
+          renderH = W / videoAspect;
+          offsetX = 0;
+          offsetY = (H - renderH) / 2;
+        }
+
+        const nx = (clientX - offsetX) / renderW;
+        const ny = (clientY - offsetY) / renderH;
+        return { nx: Math.max(0, Math.min(1, nx)), ny: Math.max(0, Math.min(1, ny)) };
+      } else {
+        const rotatedAspect = 1 / videoAspect;
+        const elemAspect = W / H;
+        if (elemAspect > rotatedAspect) {
+          renderH = H;
+          renderW = H * rotatedAspect;
+          offsetX = (W - renderW) / 2;
+          offsetY = 0;
+        } else {
+          renderW = W;
+          renderH = W / rotatedAspect;
+          offsetX = 0;
+          offsetY = (H - renderH) / 2;
+        }
+
+        const rx = clientX - offsetX;
+        const ry = clientY - offsetY;
+
+        const nx = ry / renderH;
+        const ny = 1 - (rx / renderW);
+        return { nx: Math.max(0, Math.min(1, nx)), ny: Math.max(0, Math.min(1, ny)) };
+      }
+    }
+
+    function sendTouchMessage(type, nx, ny, extra = {}) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'touch_event',
+          data: { type, nx, ny, ...extra }
+        }));
+      }
+    }
+
+    document.addEventListener('touchstart', (e) => {
+      touchCount = e.touches.length;
+      
+      if (touchCount === 1) {
+        const touch = e.touches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        lastTouchX = touchStartX;
+        lastTouchY = touchStartY;
+        touchStartTime = Date.now();
+        isDragging = false;
+        
+        const coords = getNormalizedCoords(touchStartX, touchStartY);
+        if (coords) {
+          showCursor(touchStartX, touchStartY);
+          
+          const timeSinceLastTap = touchStartTime - lastTapTime;
+          if (timeSinceLastTap < 300) {
+            isDoubleTapDrag = true;
+            sendTouchMessage('drag', coords.nx, coords.ny, { drag_state: 'start' });
+          } else {
+            isDoubleTapDrag = false;
+            longPressTimeout = setTimeout(() => {
+              sendTouchMessage('right_click', coords.nx, coords.ny);
+              showCursor(touchStartX, touchStartY, true);
+              requestHideCursor();
+            }, 600);
+          }
+        }
+      } else if (touchCount === 2) {
+        if (longPressTimeout) clearTimeout(longPressTimeout);
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        lastTouchY = (t1.clientY + t2.clientY) / 2;
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchmove', (e) => {
+      if (touchCount === 1) {
+        const touch = e.touches[0];
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        
+        if (Math.hypot(dx, dy) > 8) {
+          isDragging = true;
+          if (longPressTimeout) clearTimeout(longPressTimeout);
+        }
+        
+        if (isDragging) {
+          const coords = getNormalizedCoords(touch.clientX, touch.clientY);
+          if (coords) {
+            showCursor(touch.clientX, touch.clientY);
+            if (isDoubleTapDrag) {
+              sendTouchMessage('drag', coords.nx, coords.ny, { drag_state: 'drag' });
+            } else {
+              sendTouchMessage('move', coords.nx, coords.ny);
+            }
+          }
+        }
+      } else if (touchCount === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const currentY = (t1.clientY + t2.clientY) / 2;
+        const scrollDelta = (currentY - lastTouchY) / 10;
+        
+        const centerX = (t1.clientX + t2.clientX) / 2;
+        const centerY = currentY;
+        const coords = getNormalizedCoords(centerX, centerY);
+        
+        if (coords && Math.abs(scrollDelta) > 0.2) {
+          sendTouchMessage('scroll', coords.nx, coords.ny, { dy: scrollDelta });
+          showCursor(centerX, centerY);
+          lastTouchY = currentY;
+        }
+      }
+      
+      e.preventDefault();
+    }, { passive: false });
+
+    document.addEventListener('touchend', (e) => {
+      if (touchCount === 1) {
+        const coords = getNormalizedCoords(lastTouchX, lastTouchY);
+        if (coords) {
+          if (isDoubleTapDrag) {
+            sendTouchMessage('drag', coords.nx, coords.ny, { drag_state: 'end' });
+            isDoubleTapDrag = false;
+          } else if (!isDragging) {
+            const touchDuration = Date.now() - touchStartTime;
+            if (touchDuration < 600) {
+              if (longPressTimeout) clearTimeout(longPressTimeout);
+              
+              const timeSinceLastTap = Date.now() - lastTapTime;
+              if (timeSinceLastTap < 300) {
+                sendTouchMessage('double_click', coords.nx, coords.ny);
+                showCursor(lastTouchX, lastTouchY, true);
+                lastTapTime = 0;
+              } else {
+                sendTouchMessage('click', coords.nx, coords.ny);
+                showCursor(lastTouchX, lastTouchY, true);
+                lastTapTime = Date.now();
+              }
+            }
+          }
+        }
+      }
+      
+      if (longPressTimeout) clearTimeout(longPressTimeout);
+      touchCount = e.touches.length;
+      requestHideCursor();
+    }, { passive: false });
+
+    document.addEventListener('touchcancel', () => {
+      if (longPressTimeout) clearTimeout(longPressTimeout);
+      isDoubleTapDrag = false;
+      isDragging = false;
+      touchCount = 0;
+      requestHideCursor();
+    });
+
     // Listen for messages from React Native (reconnect, mute/unmute)
     window.addEventListener('message', (e) => {
       try {
@@ -254,10 +527,56 @@ export default function ScreenShare() {
   >('connecting');
   const [showOverlay, setShowOverlay] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
+  const [orientation, setOrientation] = useState<'landscape' | 'portrait'>('portrait');
+  const [keyboardText, setKeyboardText] = useState(' ');
   const webviewRef = useRef<WebView>(null);
+  const inputRef = useRef<TextInput>(null);
   const overlayAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const hideTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const toggleOrientation = useCallback(() => {
+    setOrientation(prev => prev === 'portrait' ? 'landscape' : 'portrait');
+    setConnectionState('connecting');
+  }, []);
+
+  const sendKeyboardAction = useCallback(async (actionData: { text?: string; key?: string }) => {
+    try {
+      const res = await fetchWithAuth(`${getServerUrl()}/api/control/keyboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(actionData),
+      });
+      if (!res.ok) {
+        console.warn('Keyboard control error:', res.status);
+      }
+    } catch (e) {
+      console.warn('Keyboard control failed:', e);
+    }
+  }, []);
+
+  const toggleKeyboard = useCallback(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, []);
+
+  const handleWinKey = useCallback(() => {
+    sendKeyboardAction({ key: 'win' });
+  }, [sendKeyboardAction]);
+
+  const handleKeyboardInput = useCallback((val: string) => {
+    if (val.length > 1) {
+      const typed = val.slice(1);
+      sendKeyboardAction({ text: typed });
+      setKeyboardText(' ');
+    } else if (val.length < 1) {
+      sendKeyboardAction({ key: 'backspace' });
+      setKeyboardText(' ');
+    } else {
+      setKeyboardText(val);
+    }
+  }, [sendKeyboardAction]);
 
   // Auto-hide overlay after 4 seconds
   const scheduleHide = useCallback(() => {
@@ -286,6 +605,21 @@ export default function ScreenShare() {
     }
   }, [connectionState]);
 
+  const handleRemoteTouch = useCallback(async (data: any) => {
+    try {
+      const res = await fetchWithAuth(`${getServerUrl()}/api/control/touch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, orientation }),
+      });
+      if (!res.ok) {
+        console.warn('Touch control error:', res.status);
+      }
+    } catch (e) {
+      console.warn('Touch control failed:', e);
+    }
+  }, [orientation]);
+
   const handleWebViewMessage = useCallback((event: any) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
@@ -306,12 +640,15 @@ export default function ScreenShare() {
         case 'muteState':
           setIsMuted(msg.data);
           break;
+        case 'touch_event':
+          handleRemoteTouch(msg.data);
+          break;
         case 'log':
           console.log('[WebRTC]', msg.data);
           break;
       }
     } catch {}
-  }, []);
+  }, [handleRemoteTouch]);
 
 
   const handleRefreshStream = useCallback(() => {
@@ -398,8 +735,9 @@ export default function ScreenShare() {
 
       {/* ─── Fullscreen WebRTC Video ──────────────────────────── */}
       <WebView
+        key={orientation}
         ref={webviewRef}
-        source={{ html: getWebRTCHtml(getWebRtcUrl()) }}
+        source={{ html: getWebRTCHtml(getWebRtcUrl(), orientation) }}
         style={styles.fullscreenWebView}
         javaScriptEnabled
         mediaPlaybackRequiresUserAction={false}
@@ -414,12 +752,16 @@ export default function ScreenShare() {
         overScrollMode="never"
       />
 
-      {/* ─── Tap Target (over the video) ─────────────────────── */}
+      {/* ─── Floating Menu Toggle Button ─────────────────────── */}
       <TouchableOpacity
-        style={StyleSheet.absoluteFill}
-        activeOpacity={1}
+        style={[
+          styles.floatingMenuBtn,
+          { bottom: showOverlay ? 160 : 30 }
+        ]}
         onPress={toggleOverlay}
-      />
+      >
+        <Text style={{ fontSize: 18 }}>⚙️</Text>
+      </TouchableOpacity>
 
 
       {/* ─── Connection Overlay (spinner) ─────────────────────── */}
@@ -449,6 +791,21 @@ export default function ScreenShare() {
           </View>
 
           <View style={styles.topRight}>
+            {/* Windows Start Button */}
+            <TouchableOpacity style={styles.iconBtn} onPress={handleWinKey}>
+              <WindowsIcon color="#00e5ff" size={20} />
+            </TouchableOpacity>
+
+            {/* Keyboard Button */}
+            <TouchableOpacity style={styles.iconBtn} onPress={toggleKeyboard}>
+              <KeyboardIcon color="#00e5ff" size={20} />
+            </TouchableOpacity>
+
+            {/* Orientation button */}
+            <TouchableOpacity style={styles.iconBtn} onPress={toggleOrientation}>
+              <OrientationIcon color="#00e5ff" size={20} isPortrait={orientation === 'portrait'} />
+            </TouchableOpacity>
+
             {/* Refresh stream button */}
             <TouchableOpacity style={styles.iconBtn} onPress={handleRefreshStream}>
               <RefreshIcon color="#00e5ff" size={20} />
@@ -528,6 +885,17 @@ export default function ScreenShare() {
           </View>
         </Animated.View>
       )}
+
+      {/* Hidden input to trigger mobile keyboard */}
+      <TextInput
+        ref={inputRef}
+        value={keyboardText}
+        onChangeText={handleKeyboardInput}
+        style={{ width: 0, height: 0, opacity: 0, position: 'absolute' }}
+        autoCapitalize="none"
+        autoCorrect={false}
+        blurOnSubmit={false}
+      />
     </View>
   );
 }
@@ -699,5 +1067,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     letterSpacing: 0.5,
+  },
+  floatingMenuBtn: {
+    position: 'absolute',
+    right: 20,
+    backgroundColor: 'rgba(26, 45, 61, 0.9)',
+    borderWidth: 1.5,
+    borderColor: '#00e5ff',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 99,
+    shadowColor: '#00e5ff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 5,
   },
 });
