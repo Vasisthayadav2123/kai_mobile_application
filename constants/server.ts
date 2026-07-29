@@ -89,18 +89,18 @@ export function getServerIp(): string {
 }
 
 // Dynamic getters so URL always reflects the latest IP
-export const getServerUrl = () => `http://${_serverIp}:${SERVER_PORT}`;
-export const getWebRtcUrl = () => `http://${_serverIp}:${WEBRTC_PORT}`;
+export const getServerUrl = () => `https://${_serverIp}:${SERVER_PORT}`;
+export const getWebRtcUrl = () => `https://${_serverIp}:${WEBRTC_PORT}`;
 
 // ── Legacy static exports (kept for backward compat) ─────────────
 export const SERVER_IP = _serverIp;
-export const SERVER_URL = `http://${_serverIp}:${SERVER_PORT}`;
-export const WEBRTC_URL = `http://${_serverIp}:${WEBRTC_PORT}`;
+export const SERVER_URL = `https://${_serverIp}:${SERVER_PORT}`;
+export const WEBRTC_URL = `https://${_serverIp}:${WEBRTC_PORT}`;
 
 
 // ── Helper: Fetch with Timeout ───────────────────────────────────
 async function fetchWithTimeout(url: string, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
-  const { timeout = 5000, ...fetchOptions } = options;
+  const { timeout = 15000, ...fetchOptions } = options;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -170,67 +170,81 @@ export async function performHandshake(): Promise<string> {
   const baseUrl = getServerUrl();
 
   _handshakePromise = (async () => {
-    try {
-      emitHandshakeStep('locating');
-      
-      // Step 1: Request challenge from server
-      const initRes = await fetchWithTimeout(`${baseUrl}/api/handshake/init`, {
-        method: 'POST',
-        timeout: 5000, // 5 seconds timeout to locate server
-      });
+    const maxRetries = 3;
+    const baseDelay = 2000; // start with 2s delay
+    let attempt = 0;
 
-      if (!initRes.ok) {
-        throw new Error(`Handshake init failed: ${initRes.status}`);
+    while (attempt <= maxRetries) {
+      try {
+        emitHandshakeStep('locating');
+
+        // Step 1: Request challenge from server
+        const initRes = await fetchWithTimeout(`${baseUrl}/api/handshake/init`, {
+          method: 'POST',
+          timeout: 15000, // 15 seconds timeout to locate server
+        });
+
+        if (!initRes.ok) {
+          throw new Error(`Handshake init failed: ${initRes.status}`);
+        }
+
+        const { challenge_id, key_number } = await initRes.json();
+
+        emitHandshakeStep('server_found');
+        await new Promise(r => setTimeout(r, 600)); // Short delay to appreciate "Server Online"
+
+        emitHandshakeStep('challenge_received', { key_number });
+        await new Promise(r => setTimeout(r, 800)); // Delay for bullet traveling down
+
+        // Step 2: Look up the secret for the requested key number
+        emitHandshakeStep('key_lookup', { key_number });
+        const keyValue = KAI_KEYS[key_number];
+        if (!keyValue) {
+          throw new Error(`No key found for key number: ${key_number}`);
+        }
+        await new Promise(r => setTimeout(r, 800)); // Appreciation delay
+
+        emitHandshakeStep('bullet_fired');
+        await new Promise(r => setTimeout(r, 600)); // Bullet flying up
+
+        emitHandshakeStep('verifying');
+
+        // Step 3: Send the answer back to the server
+        const verifyRes = await fetchWithTimeout(`${baseUrl}/api/handshake/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challenge_id,
+            key_number,
+            key: keyValue,
+          }),
+          timeout: 15000,
+        });
+
+        if (!verifyRes.ok) {
+          const err = await verifyRes.json().catch(() => ({}));
+          throw new Error(`Handshake verify failed: ${err.error || verifyRes.status}`);
+        }
+
+        const { session_token } = await verifyRes.json();
+        _sessionToken = session_token;
+
+        emitHandshakeStep('connected');
+        console.log('[KAI AUTH] Handshake successful, session established.');
+        return session_token;
+      } catch (error) {
+        attempt++;
+        if (attempt <= maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt - 1);
+          console.warn(`[KAI AUTH] Handshake attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}. Retrying in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          emitHandshakeStep('failed', { error: error instanceof Error ? error.message : String(error) });
+          throw error;
+        }
       }
-
-      const { challenge_id, key_number } = await initRes.json();
-      
-      emitHandshakeStep('server_found');
-      await new Promise(r => setTimeout(r, 600)); // Short delay to appreciate "Server Online"
-
-      emitHandshakeStep('challenge_received', { key_number });
-      await new Promise(r => setTimeout(r, 800)); // Delay for bullet traveling down
-
-      // Step 2: Look up the secret for the requested key number
-      emitHandshakeStep('key_lookup', { key_number });
-      const keyValue = KAI_KEYS[key_number];
-      if (!keyValue) {
-        throw new Error(`No key found for key number: ${key_number}`);
-      }
-      await new Promise(r => setTimeout(r, 800)); // Appreciation delay
-
-      emitHandshakeStep('bullet_fired');
-      await new Promise(r => setTimeout(r, 600)); // Bullet flying up
-
-      emitHandshakeStep('verifying');
-
-      // Step 3: Send the answer back to the server
-      const verifyRes = await fetchWithTimeout(`${baseUrl}/api/handshake/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          challenge_id,
-          key_number,
-          key: keyValue,
-        }),
-        timeout: 5000,
-      });
-      
-      if (!verifyRes.ok) {
-        const err = await verifyRes.json().catch(() => ({}));
-        throw new Error(`Handshake verify failed: ${err.error || verifyRes.status}`);
-      }
-      
-      const { session_token } = await verifyRes.json();
-      _sessionToken = session_token;
-      
-      emitHandshakeStep('connected');
-      console.log('[KAI AUTH] Handshake successful, session established.');
-      return session_token;
-    } catch (error) {
-      emitHandshakeStep('failed', { error: error instanceof Error ? error.message : String(error) });
-      throw error;
     }
+    throw new Error('Handshake failed after maximum retries');
   })();
 
   try {
@@ -250,7 +264,7 @@ export async function performHandshake(): Promise<string> {
  *   2. Attaches Bearer token to every request
  *   3. Auto-retries handshake once on 401 (expired/invalid session)
  */
-export async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
+export async function fetchWithAuth(url: string, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
   // Perform handshake if we don't have a session yet
   if (!_sessionToken) {
     try {
@@ -268,14 +282,15 @@ export async function fetchWithAuth(url: string, options: RequestInit = {}): Pro
     return { ...opts, headers };
   };
 
-  let response = await fetch(url, withAuth(options));
+  const { timeout = 15000, ...fetchOptions } = options;
+  let response = await fetchWithTimeout(url, { ...withAuth(fetchOptions), timeout });
 
   // If 401, session may have expired — retry handshake once
   if (response.status === 401) {
     try {
       console.log('[KAI AUTH] Session expired, re-authenticating...');
       await performHandshake();
-      response = await fetch(url, withAuth(options));
+      response = await fetchWithTimeout(url, { ...withAuth(fetchOptions), timeout });
     } catch (err) {
       console.warn('[KAI AUTH] Re-handshake failed:', err);
     }

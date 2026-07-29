@@ -350,6 +350,7 @@ export default function AssistantScreen() {
       const response = await fetchWithAuth(serverUrl, {
         method: 'POST',
         body: formData,
+        timeout: 60000, // 60 seconds timeout for voice/tool commands
         headers: {
           // fetchWithAuth will attach the session Bearer token.
           // Do NOT set Content-Type header so the browser/fetch client sets it with boundaries correctly

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "kai_mobile_application",
-    "slug": "kai_mobile_application",
+    "slug": "kai_interface",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -20,7 +20,11 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.kai_mobile_application"
+      "package": "com.anonymous.kai_mobile_application",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "output": "static",
@@ -45,11 +49,26 @@
         {
           "microphonePermission": "Allow KAI to record audio to process voice commands."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cdf2f0a3-71cf-4ade-97de-d52218554656"
+      }
+    },
+    "owner": "in7urgents-team"
   }
 }

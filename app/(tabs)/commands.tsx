@@ -12,19 +12,19 @@ const { width } = Dimensions.get('window');
 const CARD_PADDING = 16;
 
 const COLORS = {
-  bg:         '#0f1923',
-  cardBg:     '#1a2d3d',
-  cardBgAlt:  '#1e3344',
-  accent:     '#f0845e',   // coral/salmon
+  bg: '#0f1923',
+  cardBg: '#1a2d3d',
+  cardBgAlt: '#1e3344',
+  accent: '#f0845e',   // coral/salmon
   accentDark: '#e8734a',
   accentSoft: '#f4a574',   // peach
-  textPrimary:'#e8ecf1',
-  textSec:    '#7a8fa3',
-  textDim:    '#4a5f73',
-  barBg:      '#263d50',
-  success:    '#4cd964',
-  danger:     '#ff5a5a',
-  warning:    '#ffb347',
+  textPrimary: '#e8ecf1',
+  textSec: '#7a8fa3',
+  textDim: '#4a5f73',
+  barBg: '#263d50',
+  success: '#4cd964',
+  danger: '#ff5a5a',
+  warning: '#ffb347',
   cardBorder: '#243a4d',
 };
 
@@ -221,11 +221,11 @@ export default function CommandCentreScreen() {
       const response = await fetchWithAuth(`${getServerUrl()}/api/command/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, payload })
+        body: JSON.stringify({ type, payload }),
+        timeout: 40000, // 60 seconds timeout for tool execution
       });
 
       const data = await response.json();
-      
       // Update history list immediately
       fetchData();
 
@@ -314,7 +314,7 @@ export default function CommandCentreScreen() {
         return (
           <View style={styles.detailPanel}>
             <Text style={styles.detailPanelTitle}>Media Controls</Text>
-            
+
             <View style={styles.mediaRow}>
               {row1.map((cmd) => (
                 <TouchableOpacity
@@ -397,7 +397,7 @@ export default function CommandCentreScreen() {
         return (
           <View style={styles.detailPanel}>
             <Text style={styles.detailPanelTitle}>File Explorer</Text>
-            
+
             {/* Safe roots selection / Parent Directory navigation */}
             <View style={styles.fsHeader}>
               {currentPath ? (
@@ -544,7 +544,7 @@ export default function CommandCentreScreen() {
                 )}
               </View>
             </View>
-            
+
             <View style={styles.terminalContainer}>
               <View style={styles.terminalHeader}>
                 <View style={styles.terminalDot} />
@@ -651,7 +651,7 @@ export default function CommandCentreScreen() {
                 <MaterialIcons name="remove" size={28} color={COLORS.textPrimary} />
                 <Text style={styles.audioButtonLabel}>-10%</Text>
               </TouchableOpacity>
-              
+
               <View style={styles.audioIconContainer}>
                 <MaterialIcons name="volume-up" size={48} color={COLORS.accent} />
               </View>
@@ -723,7 +723,7 @@ export default function CommandCentreScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
+
         {/* Header (Matching style of Server Status Screen) */}
         <View style={styles.header}>
           <View>
@@ -795,7 +795,7 @@ export default function CommandCentreScreen() {
               const statusColor = item.status === 'success' ? COLORS.success : COLORS.danger;
               const dateObj = new Date(item.timestamp * 1000);
               const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-              
+
               return (
                 <View
                   key={index}
